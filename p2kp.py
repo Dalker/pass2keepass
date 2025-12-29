@@ -29,9 +29,11 @@ TODO: - make async actually do something useful or get rid of it so that progres
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import subprocess
 import time
+import sys
 from getpass import getpass
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -167,15 +169,52 @@ class Pass:
             self._export_group(kp, subgroup, kp_group)
 
 
+def get_keyfile(keyfile: str | None == None):
+    # if len(sys.argv) > 0:
+    #    if sys.argv[1] == '-h':
+    #        print("Usage: can provide keyfile as argument")
+    #        quit()
+    #    else:
+    #        keyfile = sys.argv[1]
+    if keyfile is not None:
+        return keyfile
+    else:
+        answer = input("Proceeding *without* a keyfile. Are you sure? (y/N) ")
+        if answer.lower() not in ("Y", "y"):
+            quit()
+        keyfile = None  # replace by "./keyfile" to use a file as part of the key
+    return keyfile
+
+
+def get_pass():
+    print("Give a master password to export, <C-c> to cancel")
+    mp = getpass("> HIDDEN")
+    print("re-type the password for confirmation")
+    cp = getpass("> HIDDEN")
+    if mp == cp:
+        return mp
+    else:
+        return get_pass()
+
+
 if __name__ == "__main__":
-    KEYFILE = None  # replace by "./keyfile" to use a file as part of the key
-    print("Reading the password store, this may take some time...")
+    parser = argparse.ArgumentParser(
+                    # prog='p2kp',
+                    description='Convert pass to keepass',
+                    )
+    parser.add_argument('-o', '--output', default="ps_exported.kpdb",
+                        help="name of the output kpdb file")
+    parser.add_argument('-k', '--keyfile',
+                        help="path to keyfile (for added security)")
+    args = parser.parse_args()
+    keyfile = get_keyfile(args.keyfile)
+    print(f"About to create keypass file {args.output} using keyfile {keyfile}.")
+    mp = get_pass()
+    print("Reading the password store, this may take a few minutes...")
     t = time.time()
     ps = Pass()  # replace by Pass(Pass.BASE_PATH + "/subdir/") to export a subdir only
     dt = time.time() - t
     print(f"It took {dt:.2f} seconds to read all passwords.")
     # ps.print()  # this would show what is about to be exported before confirmation
-    print("Give a master password to export, <C-c> to cancel")
-    mp = getpass("> HIDDEN")
-    ps.export("ps_exported.kpdb", mp, KEYFILE)
+    ps.export(args.output, mp, keyfile)
     print("Done.")
