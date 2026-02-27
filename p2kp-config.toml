@@ -1,0 +1,3 @@
+exclude_dirs = ["OLD", "noexport"]
+keyfile = "mykeyfile"
+export_pass = "noexport/exportpass"

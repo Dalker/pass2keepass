@@ -20,6 +20,10 @@ Reason: When looking for a pass-to-keepass exporter, the following was found:
 
 Versions: v1.0 (2022-06.18) - first working version, does the basics
 
+Changelog: - add argparse for output file name and keyfile
+           - confirm typed password before encrypting, ask again if necessary
+
+
 TODO: - make async actually do something useful or get rid of it so that progress can
         be shown again in a synchronous way
       - add command-line arguments for export file, subdir(s) and keyfile
@@ -32,12 +36,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import subprocess
-import time
 import sys
+import time
+import tomllib
 from getpass import getpass
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
 from pykeepass import pykeepass
 
 
@@ -80,8 +86,9 @@ class Pass:
 
     BASE_PATH = "~/.password-store/"
 
-    def __init__(self, store_path=BASE_PATH):
+    def __init__(self, exclude_dirs=None, store_path=BASE_PATH):
         """Initialize attributes."""
+        self._exclude_dirs = [] if exclude_dirs is None else exclude_dirs
         self._base_path = Path(store_path).expanduser()
         self._base_index = len(Path(self.BASE_PATH).expanduser().as_posix()) + 1
         self._base_group = PassGroup(name=self._base_path.name)
@@ -94,8 +101,8 @@ class Pass:
             it to become an entry, with its parent as the actual group
         """
         pass_path = path.as_posix()[self._base_index:-4]
-        pwd = await self._get_password_from_pass(pass_path)
         title = path.name[:-4]
+        pwd = self._get_password_from_pass(pass_path)
         match title:
             case "user" | "login":
                 entry.username = pwd
@@ -114,6 +121,9 @@ class Pass:
         gathers = []
         entries = [sp for sp in path.iterdir()
                    if sp.is_file() and sp.name.endswith(".gpg")]
+        if path.name in self._exclude_dirs:
+            print(f"- excluding {path.name}")
+            return
         if entries:
             entry = group.parent_group.new_entry(path.name)
             gathers.append(asyncio.gather(*[self._read_entry(subpath, group, entry)
@@ -126,7 +136,8 @@ class Pass:
         """Add a group."""
         await self._read_store(path, parent.new_group(path.name))
 
-    async def _get_password_from_pass(self, pass_path: str) -> str:
+    @staticmethod
+    def _get_password_from_pass(pass_path: str) -> str:
         """Get the pasword from pass."""
         # following line is copyright 2016 Pascal Wichmann under Apache License
         return subprocess.check_output(['pass', pass_path]).decode().splitlines()[0]
@@ -170,12 +181,6 @@ class Pass:
 
 
 def get_keyfile(keyfile: str | None == None):
-    # if len(sys.argv) > 0:
-    #    if sys.argv[1] == '-h':
-    #        print("Usage: can provide keyfile as argument")
-    #        quit()
-    #    else:
-    #        keyfile = sys.argv[1]
     if keyfile is not None:
         return keyfile
     else:
@@ -198,6 +203,9 @@ def get_pass():
 
 
 if __name__ == "__main__":
+    with open("p2kp-config.toml", "rb") as fp:
+        config = tomllib.load(fp)
+    print(config)
     parser = argparse.ArgumentParser(
                     # prog='p2kp',
                     description='Convert pass to keepass',
@@ -207,12 +215,22 @@ if __name__ == "__main__":
     parser.add_argument('-k', '--keyfile',
                         help="path to keyfile (for added security)")
     args = parser.parse_args()
-    keyfile = get_keyfile(args.keyfile)
+    keyfilename = config["keyfile"] if args.keyfile is None else args.keyfile
+    keyfile = get_keyfile(keyfilename)
     print(f"About to create keypass file {args.output} using keyfile {keyfile}.")
-    mp = get_pass()
+    try:
+        exclude_dirs = config["exclude_dirs"]
+    except KeyError:
+        exclude_dirs = None
+    try:
+        mp = Pass._get_password_from_pass(config["export_pass"])
+        print("Using password from", config["export_pass"])
+    except KeyError:
+        print("No password in config file, using CLI instead")
+        mp = get_pass()
     print("Reading the password store, this may take a few minutes...")
     t = time.time()
-    ps = Pass()  # replace by Pass(Pass.BASE_PATH + "/subdir/") to export a subdir only
+    ps = Pass(exclude_dirs)  # replace by Pass(Pass.BASE_PATH + "/subdir/") to export a subdir only
     dt = time.time() - t
     print(f"It took {dt:.2f} seconds to read all passwords.")
     # ps.print()  # this would show what is about to be exported before confirmation
